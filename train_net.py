@@ -9,29 +9,163 @@ import DHR_Net as models
 import numpy as np
 import pickle
 import os
-import argparse
+from tqdm import tqdm
+import customized_dataloader
+from customized_dataloader import msd_net_dataset
 
 
-def get_args():
-    parser = argparse.ArgumentParser(description='Train DHR Net')
-    parser.add_argument('--lr',default=0.05,type=float,help="learning rate")
-    parser.add_argument('--epochs',default=500,type=int,help="Number of training epochs")
-    parser.add_argument('--batch_size',default=128,type=int,help="Batch size")
-    parser.add_argument('--dataset_dir',default="./data/cifar10",type=str,help="Number of members in ensemble")
-    parser.add_argument('--num_classes',default=6,type=int,help="Number of classes in dataset")
-    parser.add_argument('--means',nargs='+',default=[0.4914, 0.4822, 0.4465], type=float,help="channelwise means for normalization")
-    parser.add_argument('--stds',nargs='+',default=[0.2023, 0.1994, 0.2010],type=float,help="channelwise std for normalization")
-    parser.add_argument('--momentum',default=0.9,type=float,help="momentum")
-    parser.add_argument('--weight_decay',default=0.0005,type=float,help="weight decay")
-    parser.add_argument('--save_path',default="./save_models/cifar10",type=str,help="Path to save the ensemble weights")
 
-    parser.set_defaults(argument=True)
+###################################################################
+                            # options #
+###################################################################
+seed = 4
+batch_size = 64
 
-    return parser.parse_args()
+img_size = 32
 
-def epoch_train(epoch_no,net,trainloader,optimizer):
+lr = 0.05
+epochs = 200
+momentum = 0.9
+nb_classes = 293
+weight_decay = 0.0005
+
+result_dir ="/afs/crc.nd.edu/user/j/jhuang24/scratch_50/jhuang24/models/crosr/"
+save_model_path = result_dir + "/seed_" + str(seed)
+save_result_path = result_dir + "/seed_" + str(seed) + "/train_valid_results.txt"
+
+#####################################################################
+            # Paths for saving model and data source #
+#####################################################################
+json_data_base = "/afs/crc.nd.edu/user/j/jhuang24/scratch_51/open_set/data/" \
+                 "dataset_v1_3_partition/npy_json_files_shuffled/"
+
+train_known_known_path = os.path.join(json_data_base, "train_known_known.json")
+valid_known_known_path = os.path.join(json_data_base, "valid_known_known.json")
+
+test_known_known_path_p0 = os.path.join(json_data_base, "test_known_known_part_0.json")
+test_known_known_path_p1 = os.path.join(json_data_base, "test_known_known_part_1.json")
+test_known_known_path_p2 = os.path.join(json_data_base, "test_known_known_part_2.json")
+test_known_known_path_p3 = os.path.join(json_data_base, "test_known_known_part_3.json")
+
+test_unknown_unknown_path = os.path.join(json_data_base, "test_unknown_unknown.json")
+
+#######################################################################
+# Create dataset and data loader
+#######################################################################
+# Data transforms
+normalize = transforms.Normalize(mean=[0.485, 0.456, 0.406],
+                                 std=[0.229, 0.224, 0.225])
+
+train_transform = transforms.Compose([transforms.RandomResizedCrop(img_size),
+                                      transforms.RandomHorizontalFlip(),
+                                      transforms.ToTensor(),
+                                      normalize])
+
+valid_transform = train_transform
+
+test_transform = transforms.Compose([transforms.Resize(256),
+                                     transforms.CenterCrop(img_size),
+                                     transforms.ToTensor(),
+                                     normalize])
+
+#######################################################################
+# Create dataset and data loader
+#######################################################################
+# Training
+train_known_known_dataset = msd_net_dataset(json_path=train_known_known_path,
+                                            transform=train_transform)
+train_known_known_index = torch.randperm(len(train_known_known_dataset))
+train_loader = torch.utils.data.DataLoader(train_known_known_dataset,
+                                           batch_size=batch_size,
+                                           shuffle=False,
+                                           drop_last=True,
+                                           collate_fn=customized_dataloader.collate,
+                                           sampler=torch.utils.data.RandomSampler(
+                                               train_known_known_index))
+
+print(len(train_loader))
+
+# Validation
+valid_known_known_dataset = msd_net_dataset(json_path=valid_known_known_path,
+                                            transform=valid_transform)
+valid_known_known_index = torch.randperm(len(valid_known_known_dataset))
+valid_loader = torch.utils.data.DataLoader(valid_known_known_dataset,
+                                               batch_size=batch_size,
+                                               shuffle=False,
+                                               collate_fn=customized_dataloader.collate,
+                                               sampler=torch.utils.data.RandomSampler(
+                                                   valid_known_known_index))
+
+# Testing
+test_known_known_dataset_p0 = msd_net_dataset(json_path=test_known_known_path_p0,
+                                               transform=test_transform)
+test_known_known_index_p0 = torch.randperm(len(test_known_known_dataset_p0))
+
+test_known_known_dataset_p1 = msd_net_dataset(json_path=test_known_known_path_p1,
+                                              transform=test_transform)
+test_known_known_index_p1 = torch.randperm(len(test_known_known_dataset_p1))
+
+test_known_known_dataset_p2 = msd_net_dataset(json_path=test_known_known_path_p2,
+                                              transform=test_transform)
+test_known_known_index_p2 = torch.randperm(len(test_known_known_dataset_p2))
+
+test_known_known_dataset_p3 = msd_net_dataset(json_path=test_known_known_path_p3,
+                                              transform=test_transform)
+test_known_known_index_p3 = torch.randperm(len(test_known_known_dataset_p3))
+
+
+test_unknown_unknown_dataset = msd_net_dataset(json_path=test_unknown_unknown_path,
+                                               transform=test_transform)
+test_unknown_unknown_index = torch.randperm(len(test_unknown_unknown_dataset))
+
+# When doing test, set the batch size to 1 to test the time one by one accurately
+test_known_known_loader_p0 = torch.utils.data.DataLoader(test_known_known_dataset_p0,
+                                                      batch_size=batch_size,
+                                                      shuffle=False,
+                                                      sampler=torch.utils.data.RandomSampler(
+                                                          test_known_known_index_p0),
+                                                      collate_fn=customized_dataloader.collate,
+                                                      drop_last=True)
+
+test_known_known_loader_p1 = torch.utils.data.DataLoader(test_known_known_dataset_p1,
+                                                         batch_size=batch_size,
+                                                         shuffle=False,
+                                                         sampler=torch.utils.data.RandomSampler(
+                                                             test_known_known_index_p1),
+                                                         collate_fn=customized_dataloader.collate,
+                                                         drop_last=True)
+
+test_known_known_loader_p2 = torch.utils.data.DataLoader(test_known_known_dataset_p2,
+                                                         batch_size=batch_size,
+                                                         shuffle=False,
+                                                         sampler=torch.utils.data.RandomSampler(
+                                                             test_known_known_index_p2),
+                                                         collate_fn=customized_dataloader.collate,
+                                                         drop_last=True)
+
+test_known_known_loader_p3 = torch.utils.data.DataLoader(test_known_known_dataset_p3,
+                                                         batch_size=batch_size,
+                                                         shuffle=False,
+                                                         sampler=torch.utils.data.RandomSampler(
+                                                             test_known_known_index_p3),
+                                                         collate_fn=customized_dataloader.collate,
+                                                         drop_last=True)
+
+test_unknown_unknown_loader = torch.utils.data.DataLoader(test_unknown_unknown_dataset,
+                                                          batch_size=batch_size,
+                                                          shuffle=False,
+                                                          sampler=torch.utils.data.RandomSampler(
+                                                              test_unknown_unknown_index),
+                                                          collate_fn=customized_dataloader.collate,
+                                                          drop_last=True)
+
+
+def epoch_train(net,
+                trainloader,
+                optimizer):
         
     net.train() 
+
     correct=0
     total=0
     total_loss = 0.0
@@ -41,19 +175,23 @@ def epoch_train(epoch_no,net,trainloader,optimizer):
     cls_criterion = nn.CrossEntropyLoss()
     reconst_criterion = nn.MSELoss()
 
-    for i,data in enumerate(trainloader):
+    for i in tqdm(range(len(train_loader))):
+    # for i in tqdm(range(10)):
+        batch = next(trainloader.__iter__())
 
         # get the inputs; data is a list of [inputs, labels]
-        inputs, labels = data
+        inputs = batch["imgs"]
         inputs = inputs.cuda(non_blocking=True)
-        labels = labels.cuda(non_blocking=True)
+        inputs = inputs[:, :, :32, :]
+
+        labels = batch["labels"]
+        labels = labels.cuda(non_blocking=True).type(torch.long)
     
         # zero the parameter gradients
         optimizer.zero_grad()
 
         # forward + backward + optimize
         logits, reconstruct,_ = net(inputs)
-
         cls_loss = cls_criterion(logits, labels)
 
         reconst_loss = reconst_criterion(reconstruct,inputs)
@@ -81,10 +219,15 @@ def epoch_train(epoch_no,net,trainloader,optimizer):
         iter = iter + 1
 
     return [(100 * (correct / total)), (total_cls_loss/iter), (total_reconst_loss/iter), (total_loss/iter)]
-    
-def epoch_val(net,testloader):
+
+
+
+
+def epoch_val(net,
+              testloader):
 
     net.eval()
+
     correct = 0
     total = 0
     total_loss = 0.0
@@ -95,17 +238,24 @@ def epoch_val(net,testloader):
     reconst_criterion = nn.MSELoss()
 
     with torch.no_grad():
-        for data in testloader:
 
-            images, labels = data
-            images=images.cuda(non_blocking=True)
-            labels=labels.cuda(non_blocking=True)
+        for i in tqdm(range(len(valid_loader))):
+        # for i in tqdm(range(10)):
+            batch = next(testloader.__iter__())
 
-            logits, reconstruct,_ = net(images)
+            # get the inputs; data is a list of [inputs, labels]
+            inputs = batch["imgs"]
+            inputs = inputs.cuda(non_blocking=True)
+            inputs = inputs[:, :, :32, :]
+
+            labels = batch["labels"]
+            labels = labels.cuda(non_blocking=True).type(torch.long)
+
+            logits, reconstruct,_ = net(inputs)
 
             cls_loss = cls_criterion(logits, labels)
 
-            reconst_loss = reconst_criterion(reconstruct,images)
+            reconst_loss = reconst_criterion(reconstruct, inputs)
         
             loss = cls_loss + reconst_loss
 
@@ -124,77 +274,46 @@ def epoch_val(net,testloader):
 
 def main():
 
-    seed = 222
-    np.random.seed(seed)
+    # Setup random seed
     torch.manual_seed(seed)
-    random.seed(seed)
+    torch.backends.cudnn.deterministic = True
+    torch.backends.cudnn.benchmark = False
 
-    args = get_args()
-
-    lr = args.lr
-    epochs = args.epochs
-    batch_size = args.batch_size
-    momentum= args.momentum
-    weight_decay= args.weight_decay
-    means = args.means
-    stds = args.stds
-    
-
-    num_classes = args.num_classes
-    print("Num classes "+str(num_classes))
-
-    transform_train = transforms.Compose([
-        transforms.ColorJitter(brightness=0.5, hue=0.3),
-        transforms.RandomAffine(degrees=30,translate =(0.2,0.2),scale=(0.75,1.0)),
-        transforms.RandomHorizontalFlip(),
-        transforms.ToTensor(),
-        transforms.Normalize(means,stds),
-    ])
-
-    transform_test = transforms.Compose([
-        transforms.ToTensor(),
-        transforms.Normalize(means,stds),
-    ])
-
-    root = args.dataset_dir
-
-    trainset = torchvision.datasets.ImageFolder(root=os.path.join(root,"train"), 
-                                        transform=transform_train)
-
-    trainloader = torch.utils.data.DataLoader(trainset, batch_size=batch_size,
-                                            shuffle=True,pin_memory=True,drop_last=True)
-
-    testset = torchvision.datasets.ImageFolder(root=os.path.join(root,"val"), 
-                                            transform=transform_test)
-
-    testloader = torch.utils.data.DataLoader(testset, batch_size=batch_size,
-                                            shuffle=False,pin_memory=True,drop_last=True)
-
-    net = models.DHRNet(num_classes)
+    net = models.DHRNet(nb_classes)
     net = torch.nn.DataParallel(net.cuda())
 
+    optimizer = optim.SGD(net.parameters(),
+                          lr=lr,
+                          momentum=momentum,
+                          weight_decay=weight_decay)
+    scheduler = optim.lr_scheduler.StepLR(optimizer,
+                                          step_size=30,
+                                          gamma=0.5)
 
-    optimizer = optim.SGD(net.parameters(), lr=lr, momentum=momentum,weight_decay=weight_decay)
-    scheduler = optim.lr_scheduler.StepLR(optimizer, step_size=30, gamma=0.5)
+    best_valid_acc = 0.0000
 
-    for epoch in range(epochs):  # loop over the dataset multiple times
-    
-        train_acc = epoch_train(epoch,net,trainloader,optimizer)
-        test_acc = epoch_val(net,testloader)
-        scheduler.step()
-        print("Train accuracy and cls, reconstruct and total loss for epoch "+str(epoch)+" is "+str(train_acc))       
-        print("Test accuracy and cls, reconstruct and total loss for epoch "+str(epoch)+" is "+str(test_acc))
+    with open(save_result_path, 'w') as f:
+        for epoch in range(epochs):
+            train_acc = epoch_train(net,
+                                    train_loader,
+                                    optimizer)
 
+            valid_acc = epoch_val(net,
+                                  valid_loader)
+            scheduler.step()
 
-        """
-        torch.save({'epoch':epoch,
-                     'model_state_dict':net.module.state_dict(),
-                     'train_acc':train_acc[0],
-                     'train_loss':train_acc[3],
-                      'val_acc':test_acc[0] ,
-                      'val_loss':test_acc[3]},
-          "./save_models/vanilla_dhr/checkpoints/"+str(epoch)+".pth")
-        """
+            print("Train accuracy and cls, reconstruct and total loss for epoch "+ str(epoch) +" is "+ str(train_acc))
+            print("Valid accuracy and cls, reconstruct and total loss for epoch "+ str(epoch) +" is "+ str(valid_acc))
+
+            f.write('Epoch: [{0}]\t'
+                    'Train Acc {train:.4f}\t'
+                    'Valid Acc {valid:.4f}\n'.format(epoch,
+                                                    train=train_acc[0],
+                                                    valid=valid_acc[0]))
+
+            if valid_acc > best_valid_acc:
+                torch.save(net.state_dict(), save_result_path + "/model_epoch_" + str(epoch) + '.dat')
+                torch.save(optimizer.state_dict(), save_result_path + "/optimizer_epoch_" + str(epoch) + '.dat')
 
 if __name__ == "__main__":
     main()
