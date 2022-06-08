@@ -20,10 +20,10 @@ from customized_dataloader import msd_net_dataset
 ###################################################################
 train_phase = False
 
-seed = 4
+seed = 0
 best_epoch = 199
 
-batch_size = 64
+batch_size = 32
 img_size = 32
 
 lr = 0.05
@@ -87,8 +87,6 @@ train_loader = torch.utils.data.DataLoader(train_known_known_dataset,
                                            collate_fn=customized_dataloader.collate,
                                            sampler=torch.utils.data.RandomSampler(
                                                train_known_known_index))
-
-print(len(train_loader))
 
 # Validation
 valid_known_known_dataset = msd_net_dataset(json_path=valid_known_known_path,
@@ -367,6 +365,8 @@ def main():
                     torch.save(optimizer.state_dict(), save_model_path + "/optimizer_epoch_" + str(epoch) + '.dat')
 
     else:
+        print("Seed: ", seed)
+
         print("Testing models and saving features")
         net = models.DHRNet(nb_classes)
         net = torch.nn.DataParallel(net.cuda())
@@ -374,39 +374,46 @@ def main():
         print("Best model loaded")
 
         # Train
-        save_features(net=net,
-                      dataloader=train_loader,
-                      data_name="train",
-                      npy_save_dir=feature_save_path)
+        # print("Processing training data")
+        # save_features(net=net,
+        #               dataloader=train_loader,
+        #               data_name="train",
+        #               npy_save_dir=feature_save_path)
 
         # Valid
+        print("Processing validation data")
         save_features(net=net,
                       dataloader=valid_loader,
                       data_name="valid",
                       npy_save_dir=feature_save_path)
 
         # Test known
+        print("Processing test known data part 0")
         save_features(net=net,
                       dataloader=test_known_known_loader_p0,
                       data_name="test_known_known_p0",
                       npy_save_dir=feature_save_path)
 
+        print("Processing test known data part 1")
         save_features(net=net,
                       dataloader=test_known_known_loader_p1,
                       data_name="test_known_known_p1",
                       npy_save_dir=feature_save_path)
 
+        print("Processing test known data part 2")
         save_features(net=net,
                       dataloader=test_known_known_loader_p2,
                       data_name="test_known_known_p2",
                       npy_save_dir=feature_save_path)
 
+        print("Processing test known data part 3")
         save_features(net=net,
                       dataloader=test_known_known_loader_p3,
                       data_name="test_known_known_p3",
                       npy_save_dir=feature_save_path)
 
         # Test unknown
+        print("Processing test unknown data")
         save_features(net=net,
                       dataloader=test_unknown_unknown_loader,
                       data_name="test_unknown_unknown",
