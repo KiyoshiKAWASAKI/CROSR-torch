@@ -18,9 +18,12 @@ from customized_dataloader import msd_net_dataset
 ###################################################################
                             # options #
 ###################################################################
-seed = 4
-batch_size = 64
+train_phase = False
 
+seed = 4
+best_epoch = 199
+
+batch_size = 64
 img_size = 32
 
 lr = 0.05
@@ -32,6 +35,8 @@ weight_decay = 0.0005
 result_dir ="/afs/crc.nd.edu/user/j/jhuang24/scratch_50/jhuang24/models/crosr/"
 save_model_path = result_dir + "/seed_" + str(seed)
 save_result_path = result_dir + "/seed_" + str(seed) + "/train_valid_results.txt"
+test_model_path = save_model_path + "/model_epoch_" + str(best_epoch) + ".dat"
+feature_save_path = save_model_path + "/features/"
 
 #####################################################################
             # Paths for saving model and data source #
@@ -160,10 +165,57 @@ test_unknown_unknown_loader = torch.utils.data.DataLoader(test_unknown_unknown_d
                                                           drop_last=True)
 
 
+
+def save_features(net,
+                  dataloader,
+                  data_name,
+                  npy_save_dir):
+    """
+
+    :param net:
+    :param dataloader:
+    :return:
+    """
+    net.eval()
+
+    full_label_list = []
+    full_logits_list = []
+
+    with torch.no_grad():
+        for i in tqdm(range(len(dataloader))):
+            batch = next(dataloader.__iter__())
+
+            # get the inputs; data is a list of [inputs, labels]
+            inputs = batch["imgs"]
+            inputs = inputs.cuda(non_blocking=True)
+            inputs = inputs[:, :, :32, :]
+
+            labels = batch["labels"]
+            labels = labels.cuda(non_blocking=True).type(torch.long)
+
+            logits, reconstruct, _ = net(inputs)
+
+            # Save label and logits
+            label_list = np.array(labels.cpu().tolist())
+            for label in label_list:
+                full_label_list.append(label)
+
+            logit_list = np.array(logits.cpu().tolist())
+            for logit in logit_list:
+                full_logits_list.append(logit)
+
+    label_list_np = np.asarray(full_label_list)
+    logit_list_np = np.asarray(full_logits_list)
+
+    np.save(npy_save_dir + data_name + "_logits.npy", logit_list_np)
+    np.save(npy_save_dir + data_name + "_labels.npy", label_list_np)
+
+
+
+
 def epoch_train(net,
                 trainloader,
                 optimizer):
-        
     net.train() 
 
     correct=0
@@ -238,9 +290,7 @@ def epoch_val(net,
     reconst_criterion = nn.MSELoss()
 
     with torch.no_grad():
-
         for i in tqdm(range(len(valid_loader))):
-        # for i in tqdm(range(10)):
             batch = next(testloader.__iter__())
 
             # get the inputs; data is a list of [inputs, labels]
@@ -273,47 +323,94 @@ def epoch_val(net,
 
 
 def main():
+    if train_phase:
+        print("Training and validating models")
+        # Setup random seed
+        torch.manual_seed(seed)
+        torch.backends.cudnn.deterministic = True
+        torch.backends.cudnn.benchmark = False
 
-    # Setup random seed
-    torch.manual_seed(seed)
-    torch.backends.cudnn.deterministic = True
-    torch.backends.cudnn.benchmark = False
+        net = models.DHRNet(nb_classes)
+        net = torch.nn.DataParallel(net.cuda())
 
-    net = models.DHRNet(nb_classes)
-    net = torch.nn.DataParallel(net.cuda())
+        optimizer = optim.SGD(net.parameters(),
+                              lr=lr,
+                              momentum=momentum,
+                              weight_decay=weight_decay)
+        scheduler = optim.lr_scheduler.StepLR(optimizer,
+                                              step_size=30,
+                                              gamma=0.5)
 
-    optimizer = optim.SGD(net.parameters(),
-                          lr=lr,
-                          momentum=momentum,
-                          weight_decay=weight_decay)
-    scheduler = optim.lr_scheduler.StepLR(optimizer,
-                                          step_size=30,
-                                          gamma=0.5)
+        best_valid_acc = 0.0000
 
-    best_valid_acc = 0.0000
+        with open(save_result_path, 'w') as f:
+            for epoch in range(epochs):
+                train_acc = epoch_train(net,
+                                        train_loader,
+                                        optimizer)
 
-    with open(save_result_path, 'w') as f:
-        for epoch in range(epochs):
-            train_acc = epoch_train(net,
-                                    train_loader,
-                                    optimizer)
+                valid_acc = epoch_val(net,
+                                      valid_loader)
+                scheduler.step()
 
-            valid_acc = epoch_val(net,
-                                  valid_loader)
-            scheduler.step()
+                print("Train accuracy and cls, reconstruct and total loss for epoch "+ str(epoch) +" is "+ str(train_acc))
+                print("Valid accuracy and cls, reconstruct and total loss for epoch "+ str(epoch) +" is "+ str(valid_acc))
 
-            print("Train accuracy and cls, reconstruct and total loss for epoch "+ str(epoch) +" is "+ str(train_acc))
-            print("Valid accuracy and cls, reconstruct and total loss for epoch "+ str(epoch) +" is "+ str(valid_acc))
+                f.write('Epoch: [{0}]\t'
+                        'Train Acc {train:.4f}\t'
+                        'Valid Acc {valid:.4f}\n'.format(epoch,
+                                                        train=train_acc[0],
+                                                        valid=valid_acc[0]))
 
-            f.write('Epoch: [{0}]\t'
-                    'Train Acc {train:.4f}\t'
-                    'Valid Acc {valid:.4f}\n'.format(epoch,
-                                                    train=train_acc[0],
-                                                    valid=valid_acc[0]))
+                if valid_acc[0] > best_valid_acc:
+                    torch.save(net.state_dict(), save_model_path + "/model_epoch_" + str(epoch) + '.dat')
+                    torch.save(optimizer.state_dict(), save_model_path + "/optimizer_epoch_" + str(epoch) + '.dat')
 
-            if valid_acc > best_valid_acc:
-                torch.save(net.state_dict(), save_result_path + "/model_epoch_" + str(epoch) + '.dat')
-                torch.save(optimizer.state_dict(), save_result_path + "/optimizer_epoch_" + str(epoch) + '.dat')
+    else:
+        print("Testing models and saving features")
+        net = models.DHRNet(nb_classes)
+        net = torch.nn.DataParallel(net.cuda())
+        net.load_state_dict(torch.load(test_model_path))
+        print("Best model loaded")
+
+        # Train
+        save_features(net=net,
+                      dataloader=train_loader,
+                      data_name="train",
+                      npy_save_dir=feature_save_path)
+
+        # Valid
+        save_features(net=net,
+                      dataloader=valid_loader,
+                      data_name="valid",
+                      npy_save_dir=feature_save_path)
+
+        # Test known
+        save_features(net=net,
+                      dataloader=test_known_known_loader_p0,
+                      data_name="test_known_known_p0",
+                      npy_save_dir=feature_save_path)
+
+        save_features(net=net,
+                      dataloader=test_known_known_loader_p1,
+                      data_name="test_known_known_p1",
+                      npy_save_dir=feature_save_path)
+
+        save_features(net=net,
+                      dataloader=test_known_known_loader_p2,
+                      data_name="test_known_known_p2",
+                      npy_save_dir=feature_save_path)
+
+        save_features(net=net,
+                      dataloader=test_known_known_loader_p3,
+                      data_name="test_known_known_p3",
+                      npy_save_dir=feature_save_path)
+
+        # Test unknown
+        save_features(net=net,
+                      dataloader=test_unknown_unknown_loader,
+                      data_name="test_unknown_unknown",
+                      npy_save_dir=feature_save_path)
 
 if __name__ == "__main__":
     main()

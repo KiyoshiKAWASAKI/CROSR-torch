@@ -5,7 +5,7 @@
 #$ -q gpu -l gpu=1
 #$ -l h=!qa-rtx6k-044
 #$ -e errors/
-#$ -N crosr_seed_4
+#$ -N crosr_feat_seed_4
 
 # Required modules
 module load conda
